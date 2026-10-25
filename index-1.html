@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Webs a tu medida</title>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;800&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#eef1f6;--ink:#101828;--card:#fff;--pri:#2f4bff;--ok:#0f9d68;--bad:#d92d20;--mut:#667085}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 Sora,system-ui,sans-serif}
+#app{max-width:480px;margin:0 auto;padding:20px 16px 60px}
+h1{font-size:26px;font-weight:800;margin:8px 0 16px}
+h2{font-size:18px;margin:24px 0 10px}
+.card{background:var(--card);border-radius:14px;padding:18px;margin-bottom:14px;box-shadow:0 1px 3px #1018281a}
+input,select{width:100%;padding:13px;margin:6px 0;border:1px solid #d0d5dd;border-radius:10px;font:inherit}
+button{width:100%;padding:13px;border:0;border-radius:10px;background:var(--pri);color:#fff;font:600 16px Sora,sans-serif;cursor:pointer;margin-top:8px}
+button:disabled{opacity:.5}
+button.g{background:#e4e7ec;color:var(--ink)}button.ok{background:var(--ok)}button.bad{background:var(--bad)}
+.row{display:flex;gap:10px}.row button{margin-top:0}
+.bal{background:var(--ink);color:#fff;border-radius:18px;padding:22px;margin-bottom:14px}
+.bal b{display:block;font-size:40px;font-weight:800;letter-spacing:-1px}
+.bal span{color:#98a2b3;font-size:14px}
+.l{color:var(--pri);text-align:center;cursor:pointer;margin-top:14px}
+.m{color:var(--mut);font-size:14px}.w{word-break:break-all;font-size:13px;background:#f2f4f7;padding:10px;border-radius:8px;margin:8px 0}
+.t{display:inline-block;padding:2px 10px;border-radius:99px;font-size:13px;background:#f2f4f7}
+.t.aceptado,.t.pagado{background:#d1fadf;color:#05603a}.t.rechazado{background:#fee4e2;color:#912018}
+#msg{color:var(--bad);font-size:14px;min-height:20px}
+a{color:var(--pri)}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script>
+// ====== CONFIGURA ESTO (Supabase > Project Settings > API) ======
+const SUPABASE_URL = 'PEGA_AQUI_TU_PROJECT_URL';
+const SUPABASE_KEY = 'PEGA_AQUI_TU_ANON_KEY';
+// =================================================================
+const ADMIN = 'adanreyricardo@gmail.com';
+const WALLET = '0xCBfB34fDbA5967EAB6AA331D2e86c57FDF4D0A3a';
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+const $ = s => document.querySelector(s);
+const app = $('#app');
+const refParam = new URLSearchParams(location.search).get('ref');
+const money = n => Number(n || 0).toFixed(2);
+const msg = t => { const m = $('#msg'); if (m) m.textContent = t; };
+let mode = 'registro';
+
+async function init() {
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session) return authView();
+  session.user.email === ADMIN ? adminView() : clientView(session.user);
+}
+
+function authView() {
+  const reg = mode === 'registro';
+  app.innerHTML = `<h1>${reg ? 'Crear cuenta' : 'Iniciar sesión'}</h1><div class="card">
+    ${reg ? '<input id="n" placeholder="Nombre">' : ''}
+    <input id="e" type="email" placeholder="Correo electrónico">
+    <input id="p" type="password" placeholder="Contraseña">
+    <p id="msg"></p><button id="go">${reg ? 'Crear cuenta' : 'Entrar'}</button>
+    <p class="l" id="sw">${reg ? 'Ya tengo cuenta' : 'Crear una cuenta'}</p></div>`;
+  $('#sw').onclick = () => { mode = reg ? 'login' : 'registro'; authView(); };
+  $('#go').onclick = async () => {
+    const email = $('#e').value.trim(), password = $('#p').value;
+    if (!email || password.length < 6) return msg('Escribe un correo y una contraseña de 6 o más caracteres.');
+    $('#go').disabled = true;
+    const r = reg
+      ? await sb.auth.signUp({ email, password, options: { data: { name: $('#n').value.trim(), ref: refParam } } })
+      : await sb.auth.signInWithPassword({ email, password });
+    $('#go').disabled = false;
+    if (r.error) return msg(r.error.message);
+    init();
+  };
+}
+
+const logout = () => sb.auth.signOut().then(init);
+
+async function clientView(user) {
+  const [{ data: me }, { data: plans }, { data: orders }, { data: wds }] = await Promise.all([
+    sb.from('profiles').select('*').eq('id', user.id).single(),
+    sb.from('plans').select('*').order('price'),
+    sb.from('orders').select('*,plans(name)').order('id', { ascending: false }),
+    sb.from('withdrawals').select('*').order('id', { ascending: false })]);
+  const link = `${location.origin}${location.pathname}?ref=${me.ref_code}`;
+  app.innerHTML = `<h1>Hola, ${me.name || ''}</h1>
+    <div class="bal"><span>Tu saldo</span><b>${money(me.balance)} USDT</b></div>
+    <div class="row"><button id="buy">Comprar web</button><button id="wd" class="g">Retirar</button></div>
+    <div id="panel"></div>
+    <h2>Tu enlace para invitar</h2><div class="card"><div class="w">${link}</div>
+    <p class="m">Ganas el 10% del precio cuando alguien que se registra con tu enlace compra una web.</p></div>
+    <h2>Mis compras</h2>${orders.map(o => `<div class="card">${o.plans.name} <span class="t ${o.status}">${o.status}</span></div>`).join('') || '<p class="m">Aún no has comprado nada.</p>'}
+    <h2>Mis retiros</h2>${wds.map(w => `<div class="card">${money(w.amount)} USDT <span class="t ${w.status}">${w.status}</span></div>`).join('') || '<p class="m">Aún no has retirado.</p>'}
+    <button class="g" id="out">Cerrar sesión</button>`;
+  $('#out').onclick = logout;
+  $('#buy').onclick = () => {
+    $('#panel').innerHTML = `<div class="card"><h2 style="margin-top:0">Comprar una web</h2>
+      <select id="pl">${plans.map(p => `<option value="${p.id}">${p.name} — ${money(p.price)} USDT</option>`).join('')}</select>
+      <p class="m">Envía el monto exacto en USDT por la red BEP20 a esta dirección:</p>
+      <div class="w" id="wal">${WALLET}</div>
+      <button class="g" id="cp">Copiar dirección</button>
+      <p class="m">Sube la captura de pantalla de la transferencia:</p>
+      <input type="file" id="fl" accept="image/*"><p id="msg"></p>
+      <button id="sd">Enviar</button></div>`;
+    $('#cp').onclick = () => { navigator.clipboard.writeText(WALLET); $('#cp').textContent = 'Copiada'; };
+    $('#sd').onclick = async () => {
+      const f = $('#fl').files[0];
+      if (!f) return msg('Sube la captura de la transferencia.');
+      $('#sd').disabled = true;
+      const path = `${user.id}/${Date.now()}-${f.name.replace(/[^\w.]/g, '_')}`;
+      const up = await sb.storage.from('proofs').upload(path, f);
+      if (up.error) { $('#sd').disabled = false; return msg(up.error.message); }
+      const ins = await sb.from('orders').insert({ user_id: user.id, plan_id: +$('#pl').value, proof_url: path });
+      if (ins.error) { $('#sd').disabled = false; return msg(ins.error.message); }
+      clientView(user);
+    };
+  };
+  $('#wd').onclick = () => {
+    $('#panel').innerHTML = `<div class="card"><h2 style="margin-top:0">Retirar</h2>
+      <input id="am" type="number" min="1" step="0.01" placeholder="Cantidad (mínimo 1 USDT)">
+      <input id="wa" placeholder="Tu dirección USDT BEP20 (SafePal)"><p id="msg"></p>
+      <button id="sd">Enviar</button></div>`;
+    $('#sd').onclick = async () => {
+      const amt = parseFloat($('#am').value), w = $('#wa').value.trim();
+      if (!(amt >= 1)) return msg('El mínimo para retirar es 1 USDT.');
+      if (!/^0x[a-fA-F0-9]{40}$/.test(w)) return msg('La dirección no es válida.');
+      $('#sd').disabled = true;
+      const r = await sb.rpc('request_withdrawal', { amt, w });
+      if (r.error) { $('#sd').disabled = false; return msg(r.error.message); }
+      clientView(user);
+    };
+  };
+}
+
+async function adminView() {
+  const [{ data: orders }, { data: wds }, { data: users }] = await Promise.all([
+    sb.from('orders').select('*,plans(name,price),profiles(name,email)').eq('status', 'pendiente').order('id'),
+    sb.from('withdrawals').select('*,profiles(name,email)').eq('status', 'pendiente').order('id'),
+    sb.from('profiles').select('id')]);
+  const cards = await Promise.all(orders.map(async o => {
+    const { data } = await sb.storage.from('proofs').createSignedUrl(o.proof_url, 3600);
+    return `<div class="card"><b>${o.profiles.name}</b> <span class="m">${o.profiles.email}</span>
+      <p>${o.plans.name} — <b>${money(o.plans.price)} USDT</b></p>
+      <a href="${data?.signedUrl}" target="_blank">Ver captura</a>
+      <div class="row" style="margin-top:12px"><button class="ok" onclick="act('approve_order',{oid:${o.id}})">Aceptar</button>
+      <button class="bad" onclick="rej(${o.id})">Rechazar</button></div></div>`;
+  }));
+  app.innerHTML = `<h1>Panel de admin</h1><p class="m">${users.length} usuarios registrados</p>
+    <h2>Compras pendientes</h2>${cards.join('') || '<p class="m">No hay compras pendientes.</p>'}
+    <h2>Retiros pendientes</h2>${wds.map(w => `<div class="card"><b>${w.profiles.name}</b> <span class="m">${w.profiles.email}</span>
+      <p><b>${money(w.amount)} USDT</b></p><div class="w">${w.wallet}</div>
+      <div class="row"><button class="ok" onclick="act('resolve_withdrawal',{wid:${w.id},ok:true})">Ya pagué</button>
+      <button class="bad" onclick="act('resolve_withdrawal',{wid:${w.id},ok:false})">Rechazar</button></div></div>`).join('') || '<p class="m">No hay retiros pendientes.</p>'}
+    <button class="g" onclick="logout()">Cerrar sesión</button>`;
+}
+async function act(fn, args) {
+  const r = await sb.rpc(fn, args);
+  if (r.error) alert(r.error.message);
+  adminView();
+}
+async function rej(id) {
+  const r = await sb.from('orders').update({ status: 'rechazado' }).eq('id', id);
+  if (r.error) alert(r.error.message);
+  adminView();
+}
+init();
+</script>
+</body>
+</html>
